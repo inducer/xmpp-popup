@@ -106,8 +106,8 @@ class MessageShowManager(object):
 
         label = Gtk.Label()
         label.set_markup(
-            '<span font_desc="18"><i>%s:</i></span>\n'
-            '<span font_desc="48">%s</span>'
+            '<span font_desc="10"><i>%s:</i></span>\n'
+            '<span font_desc="20">%s</span>'
             % (sender, body))
 
         buttonbox = Gtk.Box(spacing=10)
