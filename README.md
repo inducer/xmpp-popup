@@ -6,7 +6,7 @@ the bottom right of your desktop. My intended use case of this is for
 interactive comments during my lectures. Not sure if this will work, worth a
 shot. :)
 
-## Dependencies:
+## Dependencies
 
 * [Wokkel](http://wokkel.ik.nu/) (>= 0.7.1) (and, in turn, [Twisted Words](https://twistedmatrix.com/trac/wiki/TwistedWords))
 * [PyGObject](https://wiki.gnome.org/action/show/Projects/PyGObject?action=show)
