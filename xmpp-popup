@@ -116,8 +116,11 @@ class MessageShowManager(object):
             keep_button = Gtk.Button(label="Keep")
             buttonbox.add(keep_button)
 
+        close_all_button = Gtk.Button(label="Close all")
+        buttonbox.pack_end(close_all_button, expand=False, fill=False, padding=0)
+
         close_button = Gtk.Button(label="Close")
-        buttonbox.pack_end(close_button, expand=False, fill=False,padding=0)
+        buttonbox.pack_end(close_button, expand=False, fill=False, padding=0)
 
         vbox.add(label)
 
@@ -146,6 +149,9 @@ class MessageShowManager(object):
         def remove_win(evt):
             self.remove_window(win)
 
+        def remove_all(evt):
+            self.remove_all()
+
         TIMER_INCREMENT = 10
 
         def tick_timer():
@@ -164,6 +170,7 @@ class MessageShowManager(object):
             keep_button.connect("clicked", keep_win)
 
         close_button.connect("clicked", remove_win)
+        close_all_button.connect("clicked", remove_all)
 
         if options.popup_timeout:
             timer = [0]
@@ -177,7 +184,6 @@ class MessageShowManager(object):
         bottom = self.screen_height
 
         for win in self.message_windows:
-            print "LAYOUT", win, bottom
             w, h = win.get_size()
             bottom -= h
             win.move(self.screen_width, bottom)
@@ -196,6 +202,12 @@ class MessageShowManager(object):
 
         win.destroy()
         self.relayout()
+
+    def remove_all(self):
+        for w in self.message_windows:
+            w.destroy()
+
+        del self.message_windows[:]
 
 
 class MessageReceiver(MessageProtocol):
