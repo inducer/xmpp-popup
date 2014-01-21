@@ -1,0 +1,261 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import division
+
+import sys
+
+from twisted.internet import gtk3reactor
+gtk3reactor.install()
+
+from twisted.application import service
+from twisted.words.protocols.jabber.jid import JID
+from twisted.python import log
+
+from wokkel import client
+from wokkel.xmppim import (
+    RosterClientProtocol, PresenceProtocol, MessageProtocol)
+
+from gi.repository import Gtk, Gdk, GLib
+
+
+class XMPPPopupApplication(Gtk.Application):
+    def __init__(self):
+        Gtk.Application.__init__(self, application_id="xmpp-popup")
+
+    def on_activate(self, evt):
+        pass
+
+    def run(self, argv):
+        self.connect('activate', self.on_activate)
+        return super(Gtk.Application, self).run(argv)
+
+
+class PresenceHandler(PresenceProtocol):
+    def subscribedReceived(self, presence):
+        "Subscription approval confirmation was received."
+        # This is just a confirmation. Don't respond.
+
+        pass
+
+    def unsubscribedReceived(self, presence):
+        "Unsubscription confirmation was received."
+        # This is just a confirmation. Don't respond.
+        pass
+
+    def subscribeReceived(self, presence):
+        self.subscribed(recipient=presence.sender,
+                        sender=presence.recipient)
+        self.available(recipient=presence.sender,
+                       status=u"I'm here",
+                       sender=presence.recipient)
+
+    def unsubscribeReceived(self, presence):
+        self.unsubscribed(recipient=presence.sender,
+                          sender=presence.recipient)
+
+    def probeReceived(self, presence):
+        self.available(recipient=presence.sender,
+                       status=u"I'm here",
+                       sender=presence.recipient)
+
+
+class RosterHandler(RosterClientProtocol):
+    def gotRoster(self, roster):
+        print 'Got roster:'
+        for entity, item in roster.iteritems():
+            print '  %r (%r)' % (entity, item.name or '')
+
+    def connectionInitialized(self):
+        RosterClientProtocol.connectionInitialized(self)
+        d = self.getRoster()
+        d.addCallback(self.gotRoster)
+        d.addErrback(log.err)
+
+    def removeReceived(self, request):
+        print 'Contact %r was removed.' % (request.item.entity,)
+
+    def setReceived(self, request):
+        print 'Contact %r (%r) was updated.' % (request.item.entity,
+                                                request.item.name)
+
+
+class MessageShowManager(object):
+    def __init__(self):
+        # first in, first out
+        self.message_windows = []
+
+        window = Gtk.Window()
+        screen = window.get_screen()
+        self.screen_height = screen.get_height()
+        self.screen_width = screen.get_width()
+
+    def show_message(self, sender, body):
+        win = Gtk.Window(title="Lecture message")
+
+        frame = Gtk.Frame()
+        win.add(frame)
+        frame.set_shadow_type(Gtk.ShadowType.OUT)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        vbox.set_margin_top(10)
+        vbox.set_margin_left(10)
+        vbox.set_margin_bottom(10)
+        vbox.set_margin_right(10)
+        frame.add(vbox)
+
+        label = Gtk.Label()
+        label.set_markup(
+            '<span font_desc="18"><i>%s:</i></span>\n'
+            '<span font_desc="48">%s</span>'
+            % (sender, body))
+
+        buttonbox = Gtk.Box(spacing=10)
+
+        if options.popup_timeout:
+            keep_button = Gtk.Button(label="Keep")
+            buttonbox.add(keep_button)
+
+        close_button = Gtk.Button(label="Close")
+        buttonbox.pack_end(close_button, expand=False, fill=False,padding=0)
+
+        vbox.add(label)
+
+        if options.popup_timeout:
+            bar = Gtk.ProgressBar()
+            vbox.add(bar)
+
+        vbox.add(buttonbox)
+
+        win.set_gravity(Gdk.Gravity.SOUTH_EAST)
+        win.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        win.set_decorated(False)
+        win.set_urgency_hint(True)
+        win.show_all()
+
+        self.message_windows.insert(0, win)
+        self.relayout()
+
+        # {{{ window behavior
+
+        def keep_win(evt):
+            if timer:
+                vbox.remove(bar)
+                del timer[0]
+
+        def remove_win(evt):
+            self.remove_window(win)
+
+        TIMER_INCREMENT = 10
+
+        def tick_timer():
+            if not timer:
+                return
+
+            timer[0] += TIMER_INCREMENT
+            bar.set_fraction(timer[0]/options.popup_timeout)
+            if timer[0] > options.popup_timeout:
+                self.remove_window(win)
+                return
+
+            timer_id[0] = GLib.timeout_add(TIMER_INCREMENT*1000, tick_timer)
+
+        if options.popup_timeout:
+            keep_button.connect("clicked", keep_win)
+
+        close_button.connect("clicked", remove_win)
+
+        if options.popup_timeout:
+            timer = [0]
+            timer_id = [GLib.timeout_add(TIMER_INCREMENT*1000, tick_timer)]
+        else:
+            timer = []
+
+        # }}}
+
+    def relayout(self):
+        bottom = self.screen_height
+
+        for win in self.message_windows:
+            print "LAYOUT", win, bottom
+            w, h = win.get_size()
+            bottom -= h
+            win.move(self.screen_width, bottom)
+            win.present()
+
+    def remove_window(self, win):
+        found = False
+        for i, w in enumerate(self.message_windows):
+            if w is win:
+                self.message_windows.pop(i)
+                found = True
+                break
+
+        if not found:
+            return
+
+        win.destroy()
+        self.relayout()
+
+
+class MessageReceiver(MessageProtocol):
+    def onMessage(self, msg):
+        from twisted.words.xish import domish
+
+        if msg["type"] == 'chat' and hasattr(msg, "body"):
+            if 0:
+                reply = domish.Element((None, "message"))
+                reply["to"] = msg["from"]
+                reply["from"] = msg["to"]
+                reply["type"] = 'chat'
+                reply.addElement("body", content="echo: " + str(msg.body))
+
+                self.send(reply)
+
+            mshow_mgr.show_message(msg["from"], msg.body)
+
+
+from optparse import OptionParser
+parser = OptionParser()
+parser.add_option("-j", "--jid", metavar="JID")
+parser.add_option("-p", "--password", metavar="PASSWORD")
+parser.add_option(
+    "-t", "--popup-timeout", metavar="SECONDS", type="int",
+    help="timeout (or 0 to disable timeout, which is the default)",
+    default=0)
+options, args = parser.parse_args()
+
+if options.jid is None:
+    raise RuntimeError("must specify JID")
+
+log.startLogging(sys.stdout)
+
+jid = JID(options.jid)
+
+gapp = XMPPPopupApplication()
+
+from twisted.internet import reactor
+reactor.registerGApplication(gapp)
+
+application = service.Application('XMPP client')
+xmpp_client = client.XMPPClient(jid, options.password)
+xmpp_client.logTraffic = True
+xmpp_client.setServiceParent(application)
+
+presence = PresenceHandler()
+presence.setHandlerParent(xmpp_client)
+presence.available()
+
+roster = RosterHandler()
+roster.setHandlerParent(xmpp_client)
+
+msg_handler = MessageReceiver()
+msg_handler.setHandlerParent(xmpp_client)
+
+mshow_mgr = MessageShowManager()
+
+xmpp_client.startService()
+reactor.addSystemEventTrigger('before', 'shutdown', xmpp_client.stopService)
+
+from twisted.internet import reactor
+reactor.run()
