@@ -14,15 +14,12 @@ from twisted.python import log
 
 from wokkel import client
 from wokkel.xmppim import (
-    RosterClientProtocol, PresenceProtocol, MessageProtocol)
+    RosterClientProtocol, PresenceClientProtocol, MessageProtocol)
 
 from gi.repository import Gtk, Gdk, GLib
 
 
 class XMPPPopupApplication(Gtk.Application):
-    def __init__(self):
-        Gtk.Application.__init__(self, application_id="xmpp-popup")
-
     def on_activate(self, evt):
         pass
 
@@ -31,57 +28,8 @@ class XMPPPopupApplication(Gtk.Application):
         return super(Gtk.Application, self).run(argv)
 
 
-class PresenceHandler(PresenceProtocol):
-    def subscribedReceived(self, presence):
-        "Subscription approval confirmation was received."
-        # This is just a confirmation. Don't respond.
-
-        pass
-
-    def unsubscribedReceived(self, presence):
-        "Unsubscription confirmation was received."
-        # This is just a confirmation. Don't respond.
-        pass
-
-    def subscribeReceived(self, presence):
-        self.subscribed(recipient=presence.sender,
-                        sender=presence.recipient)
-        self.available(recipient=presence.sender,
-                       status=u"I'm here",
-                       sender=presence.recipient)
-
-    def unsubscribeReceived(self, presence):
-        self.unsubscribed(recipient=presence.sender,
-                          sender=presence.recipient)
-
-    def probeReceived(self, presence):
-        self.available(recipient=presence.sender,
-                       status=u"I'm here",
-                       sender=presence.recipient)
-
-
-class RosterHandler(RosterClientProtocol):
-    def gotRoster(self, roster):
-        print 'Got roster:'
-        for entity, item in roster.iteritems():
-            print '  %r (%r)' % (entity, item.name or '')
-
-    def connectionInitialized(self):
-        RosterClientProtocol.connectionInitialized(self)
-        d = self.getRoster()
-        d.addCallback(self.gotRoster)
-        d.addErrback(log.err)
-
-    def removeReceived(self, request):
-        print 'Contact %r was removed.' % (request.item.entity,)
-
-    def setReceived(self, request):
-        print 'Contact %r (%r) was updated.' % (request.item.entity,
-                                                request.item.name)
-
-
 class MessageShowManager(object):
-    def __init__(self):
+    def __init__(self, options):
         # first in, first out
         self.message_windows = []
 
@@ -89,6 +37,8 @@ class MessageShowManager(object):
         screen = window.get_screen()
         self.screen_height = screen.get_height()
         self.screen_width = screen.get_width()
+
+        self.options = options
 
     def show_message(self, sender, body):
         win = Gtk.Window(title="Lecture message")
@@ -112,7 +62,7 @@ class MessageShowManager(object):
 
         buttonbox = Gtk.Box(spacing=10)
 
-        if options.popup_timeout:
+        if self.options.popup_timeout:
             keep_button = Gtk.Button(label="Keep")
             buttonbox.add(keep_button)
 
@@ -124,7 +74,7 @@ class MessageShowManager(object):
 
         vbox.add(label)
 
-        if options.popup_timeout:
+        if self.options.popup_timeout:
             bar = Gtk.ProgressBar()
             vbox.add(bar)
 
@@ -159,20 +109,20 @@ class MessageShowManager(object):
                 return
 
             timer[0] += TIMER_INCREMENT
-            bar.set_fraction(timer[0]/options.popup_timeout)
-            if timer[0] > options.popup_timeout:
+            bar.set_fraction(timer[0]/self.options.popup_timeout)
+            if timer[0] > self.options.popup_timeout:
                 self.remove_window(win)
                 return
 
             timer_id[0] = GLib.timeout_add(TIMER_INCREMENT*1000, tick_timer)
 
-        if options.popup_timeout:
+        if self.options.popup_timeout:
             keep_button.connect("clicked", keep_win)
 
         close_button.connect("clicked", remove_win)
         close_all_button.connect("clicked", remove_all)
 
-        if options.popup_timeout:
+        if self.options.popup_timeout:
             timer = [0]
             timer_id = [GLib.timeout_add(TIMER_INCREMENT*1000, tick_timer)]
         else:
@@ -210,64 +160,218 @@ class MessageShowManager(object):
         del self.message_windows[:]
 
 
-class MessageReceiver(MessageProtocol):
-    def onMessage(self, msg):
-        from twisted.words.xish import domish
+class ConversationManager(object):
+    def __init__(self, mshow_mgr, jid, options):
+        self.mshow_mgr = mshow_mgr
+        self.jid = jid
+        self.options = options
 
+        import sqlite3 as sqlite
+        if options.reg_db is not None:
+            self.db_conn = sqlite.connect(options.reg_db, timeout=30)
+
+            try:
+                self.db_conn.execute("select * from registrations;")
+            except sqlite.OperationalError:
+                self.db_conn.execute("""
+                      create table registrations (
+                        id integer primary key autoincrement,
+                        jid text,
+                        email text,
+                        reg_code text)
+                        """)
+                # reg_code is null means successfully registered
+
+        else:
+            self.db_conn = None
+
+    def message_received(self, msg):
         if msg["type"] == 'chat' and hasattr(msg, "body"):
-            if 0:
-                reply = domish.Element((None, "message"))
-                reply["to"] = msg["from"]
-                reply["from"] = msg["to"]
-                reply["type"] = 'chat'
-                reply.addElement("body", content="echo: " + str(msg.body))
+            if self.db_conn is None:
+                self.mshow_mgr.show_message(msg["from"], msg.body)
 
-                self.send(reply)
+            bare_jid = JID(msg["from"]).userhost()
+            import re
 
-            mshow_mgr.show_message(msg["from"], msg.body)
+            # {{{ handle reg message
+
+            reg_match = re.match("^reg (.*)$", unicode(msg.body))
+            if reg_match is not None:
+                self.db_conn.execute(
+                    "delete from registrations where jid = ?", (bare_jid, ))
+
+                email = reg_match.group(1)
+                if not email.endswith(self.options.required_email_suffix):
+                    from twisted.words.xish import domish
+                    msg = domish.Element((None, "message"))
+                    msg["to"] = msg["from"]
+                    msg["from"] = self.jid.full()
+                    msg["type"] = 'chat'
+
+                    msg.addElement("body", content="Your email must end in '%s'."
+                                % self.options.required_email_suffix)
+
+                    self.message_protocol.send(msg)
+                    return
+
+                import random
+                reg_code = "".join(random.choice("0123456789") for i in range(6))
+
+                self.db_conn.execute(
+                    "insert into registrations (jid, email, reg_code) "
+                    "values (?, ?, ?)", (bare_jid, reg_code, email))
+
+                from email.mime.text import MIMEText
+                from subprocess import Popen, PIPE
+
+                msg = MIMEText("Hi there,\n\n"
+                        "please send 'code %s' (minus the quotes) to '%s' "
+                        "(via chat) to complete your "
+                        "registration for the instant feedback system.\n\nThanks!"
+                        % (reg_code, self.jid.userhost()))
+
+                if self.options.sender_email is None:
+                    from_email = self.jid.userhost()
+                else:
+                    from_email = self.options.sender_email
+
+                msg["From"] = from_email
+                msg["To"] = email
+                msg["Subject"] = "Registration code for instant feedback system"
+                p = Popen(["/usr/sbin/sendmail", "-t"], stdin=PIPE)
+                p.communicate(msg.as_string())
+
+            # }}}
+
+    def presence_received(self, entity):
+        from twisted.words.xish import domish
+        msg = domish.Element((None, "message"))
+        msg["to"] = entity.full()
+        msg["from"] = self.jid.full()
+        msg["type"] = 'chat'
+        greeting = ("Welcome to the instant feedback system! "
+                "Please say 'reg my@email.address' (without quotes) to register. ")
+
+        if self.options.required_email_suffix is not None:
+            greeting += "Your email must end in '%s'." \
+                    % self.options.required_email_suffix
+
+        msg.addElement("body", content=greeting)
+
+        self.message_protocol.send(msg)
 
 
-from optparse import OptionParser
-parser = OptionParser()
-parser.add_option("-j", "--jid", metavar="JID")
-parser.add_option("-p", "--password", metavar="PASSWORD")
-parser.add_option(
-    "-t", "--popup-timeout", metavar="SECONDS", type="int",
-    help="timeout (or 0 to disable timeout, which is the default)",
-    default=0)
-options, args = parser.parse_args()
+# {{{ jabber handlers
 
-if options.jid is None:
-    raise RuntimeError("must specify JID")
+class MessageReceiver(MessageProtocol):
+    def __init__(self, conversation_mgr):
+        self.conversation_mgr = conversation_mgr
+        conversation_mgr.message_protocol = self
 
-log.startLogging(sys.stdout)
+    def onMessage(self, msg):
+        self.conversation_mgr.message_received(msg)
 
-jid = JID(options.jid)
 
-gapp = XMPPPopupApplication()
+class PresenceHandler(PresenceClientProtocol):
+    def __init__(self, conversation_mgr):
+        self.conversation_mgr = conversation_mgr
+        conversation_mgr.presence_protocol = self
 
-from twisted.internet import reactor
-reactor.registerGApplication(gapp)
+    def subscribedReceived(self, presence):
+        "Subscription approval confirmation was received."
+        # This is just a confirmation. Don't respond.
 
-application = service.Application('XMPP client')
-xmpp_client = client.XMPPClient(jid, options.password)
-xmpp_client.logTraffic = True
-xmpp_client.setServiceParent(application)
+        pass
 
-presence = PresenceHandler()
-presence.setHandlerParent(xmpp_client)
-presence.available()
+    def unsubscribedReceived(self, presence):
+        "Unsubscription confirmation was received."
+        # This is just a confirmation. Don't respond.
+        pass
 
-roster = RosterHandler()
-roster.setHandlerParent(xmpp_client)
+    def subscribeReceived(self, entity):
+        self.subscribe(entity)
+        self.available(entity)
 
-msg_handler = MessageReceiver()
-msg_handler.setHandlerParent(xmpp_client)
+    def availableReceived(self, entity, show, statuses, priority):
+        self.conversation_mgr.presence_received(entity)
 
-mshow_mgr = MessageShowManager()
 
-xmpp_client.startService()
-reactor.addSystemEventTrigger('before', 'shutdown', xmpp_client.stopService)
+class RosterHandler(RosterClientProtocol):
+    def gotRoster(self, roster):
+        print 'Got roster:'
+        for entity, item in roster.iteritems():
+            print '  %r (%r)' % (entity, item.name or '')
 
-from twisted.internet import reactor
-reactor.run()
+    def connectionInitialized(self):
+        RosterClientProtocol.connectionInitialized(self)
+        d = self.getRoster()
+        d.addCallback(self.gotRoster)
+        d.addErrback(log.err)
+
+    def removeReceived(self, request):
+        print 'Contact %r was removed.' % (request.item.entity,)
+
+    def setReceived(self, request):
+        print 'Contact %r (%r) was updated.' % (request.item.entity,
+                                                request.item.name)
+
+# }}}
+
+
+def main():
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option("-j", "--jid", metavar="JID")
+    parser.add_option("-p", "--password", metavar="PASSWORD")
+    parser.add_option(
+        "-t", "--popup-timeout", metavar="SECONDS", type="int",
+        help="timeout (or 0 to disable timeout, which is the default)",
+        default=0)
+    parser.add_option(
+        "--reg-db", metavar="SQLITE_FILE",
+        help="use registration with specified database file "
+        "(will be created if it does not exist)")
+    parser.add_option(
+        "--required-email-suffix", metavar="STRING",
+        help="only allow registrations with email ending in STRING")
+    options, args = parser.parse_args()
+
+    if options.jid is None:
+        raise RuntimeError("must specify JID")
+
+    log.startLogging(sys.stdout)
+
+    jid = JID(options.jid)
+
+    gapp = XMPPPopupApplication()
+
+    from twisted.internet import reactor
+    reactor.registerGApplication(gapp)
+
+    application = service.Application('XMPP client')
+    xmpp_client = client.XMPPClient(jid, options.password)
+    xmpp_client.logTraffic = True
+    xmpp_client.setServiceParent(application)
+
+    mshow_mgr = MessageShowManager(options)
+
+    cmgr = ConversationManager(mshow_mgr, jid, options)
+
+    presence = PresenceHandler(cmgr)
+    presence.setHandlerParent(xmpp_client)
+    presence.available()
+
+    msg_handler = MessageReceiver(cmgr)
+    msg_handler.setHandlerParent(xmpp_client)
+
+    roster = RosterHandler()
+    roster.setHandlerParent(xmpp_client)
+
+    xmpp_client.startService()
+    reactor.addSystemEventTrigger('before', 'shutdown', xmpp_client.stopService)
+
+    from twisted.internet import reactor
+    reactor.run()
+
+if __name__ == "__main__":
+    main()
