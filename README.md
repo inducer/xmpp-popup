@@ -9,7 +9,7 @@ after a set period. Not sure if this will work, but I think it's worth a shot.
 
 ## Dependencies
 
-* [Wokkel](http://wokkel.ik.nu/) (>= 0.7.1) (and, in turn, [Twisted Words](https://twistedmatrix.com/trac/wiki/TwistedWords))
+* [Wokkel](http://pypi.python.org/pypi/wokkel) (>= 0.7.1) (and, in turn, [Twisted Words](https://twistedmatrix.com/trac/wiki/TwistedWords))
 * [PyGObject](https://wiki.gnome.org/action/show/Projects/PyGObject?action=show)
 
 ## License
