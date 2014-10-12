@@ -16,7 +16,7 @@ from wokkel import client
 from wokkel.xmppim import (
     RosterClientProtocol, PresenceProtocol, MessageProtocol)
 
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 
 
 class XMPPPopupApplication(Gtk.Application):
@@ -105,6 +105,8 @@ class MessageShowManager(object):
         frame.add(vbox)
 
         label = Gtk.Label()
+        # label.set_line_wrap(True)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_markup(
             # '<span font_desc="10"><i>%s:</i></span>\n' % sender
             # +
