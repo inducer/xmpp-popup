@@ -1,11 +1,14 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from __future__ import division
 
+from __future__ import absolute_import
+from __future__ import print_function
 import sys
 
 from twisted.internet import gtk3reactor
+import six
 gtk3reactor.install()
 
 from twisted.application import service
@@ -62,9 +65,9 @@ class PresenceHandler(PresenceProtocol):
 
 class RosterHandler(RosterClientProtocol):
     def gotRoster(self, roster):
-        print 'Got roster:'
-        for entity, item in roster.iteritems():
-            print '  %r (%r)' % (entity, item.name or '')
+        print('Got roster:')
+        for entity, item in six.iteritems(roster):
+            print('  %r (%r)' % (entity, item.name or ''))
 
     def connectionInitialized(self):
         RosterClientProtocol.connectionInitialized(self)
@@ -73,11 +76,11 @@ class RosterHandler(RosterClientProtocol):
         d.addErrback(log.err)
 
     def removeReceived(self, request):
-        print 'Contact %r was removed.' % (request.item.entity,)
+        print('Contact %r was removed.' % (request.item.entity,))
 
     def setReceived(self, request):
-        print 'Contact %r (%r) was updated.' % (request.item.entity,
-                                                request.item.name)
+        print('Contact %r (%r) was updated.' % (request.item.entity,
+                                                request.item.name))
 
 
 class MessageShowManager(object):
