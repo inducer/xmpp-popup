@@ -1,4 +1,4 @@
-#XMPP to popup
+# XMPP to popup
 
 This simple script logs into a specified Jabber account, approves all incoming
 subscription requests, and shows every incoming message in a popup window on
