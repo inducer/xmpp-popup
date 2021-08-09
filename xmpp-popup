@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from __future__ import division
-
-from __future__ import absolute_import
-from __future__ import print_function
 import sys
 
 import gi
 gi.require_version("Gtk", "3.0")
 
 from twisted.internet import gtk3reactor
-import six
 gtk3reactor.install()
 
 from twisted.application import service
@@ -33,19 +28,19 @@ class XMPPPopupApplication(Gtk.Application):
         pass
 
     def run(self, argv):
-        self.connect('activate', self.on_activate)
+        self.connect("activate", self.on_activate)
         return super(Gtk.Application, self).run(argv)
 
 
 class PresenceHandler(PresenceProtocol):
     def subscribedReceived(self, presence):
-        "Subscription approval confirmation was received."
+        """Subscription approval confirmation was received."""
         # This is just a confirmation. Don't respond.
 
         pass
 
     def unsubscribedReceived(self, presence):
-        "Unsubscription confirmation was received."
+        """Unsubscription confirmation was received."""
         # This is just a confirmation. Don't respond.
         pass
 
@@ -68,9 +63,9 @@ class PresenceHandler(PresenceProtocol):
 
 class RosterHandler(RosterClientProtocol):
     def gotRoster(self, roster):
-        print('Got roster:')
-        for entity, item in six.iteritems(roster):
-            print('  %r (%r)' % (entity, item.name or ''))
+        print("Got roster:")
+        for entity, item in roster.items():
+            print("  %r (%r)" % (entity, item.name or ""))
 
     def connectionInitialized(self):
         RosterClientProtocol.connectionInitialized(self)
@@ -79,10 +74,10 @@ class RosterHandler(RosterClientProtocol):
         d.addErrback(log.err)
 
     def removeReceived(self, request):
-        print('Contact %r was removed.' % (request.item.entity,))
+        print("Contact %r was removed." % (request.item.entity,))
 
     def setReceived(self, request):
-        print('Contact %r (%r) was updated.' % (request.item.entity,
+        print("Contact %r (%r) was updated." % (request.item.entity,
                                                 request.item.name))
 
 
@@ -160,7 +155,7 @@ class MessageShowManager(object):
         def remove_all(evt):
             self.remove_all()
 
-        TIMER_INCREMENT = 10
+        TIMER_INCREMENT = 10  # noqa: N806
 
         def tick_timer():
             if not timer:
@@ -222,12 +217,12 @@ class MessageReceiver(MessageProtocol):
     def onMessage(self, msg):
         from twisted.words.xish import domish
 
-        if msg["type"] == 'chat' and hasattr(msg, "body"):
+        if msg["type"] == "chat" and hasattr(msg, "body"):
             if 0:
                 reply = domish.Element((None, "message"))
                 reply["to"] = msg["from"]
                 reply["from"] = msg["to"]
-                reply["type"] = 'chat'
+                reply["type"] = "chat"
                 reply.addElement("body", content="echo: " + str(msg.body))
 
                 self.send(reply)
@@ -257,7 +252,7 @@ gapp = XMPPPopupApplication()
 from twisted.internet import reactor
 reactor.registerGApplication(gapp)
 
-application = service.Application('XMPP client')
+application = service.Application("XMPP client")
 xmpp_client = client.XMPPClient(jid, options.password)
 xmpp_client.logTraffic = True
 xmpp_client.setServiceParent(application)
@@ -275,7 +270,7 @@ msg_handler.setHandlerParent(xmpp_client)
 mshow_mgr = MessageShowManager()
 
 xmpp_client.startService()
-reactor.addSystemEventTrigger('before', 'shutdown', xmpp_client.stopService)
+reactor.addSystemEventTrigger("before", "shutdown", xmpp_client.stopService)
 
 from twisted.internet import reactor
 reactor.run()
